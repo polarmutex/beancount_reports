@@ -208,10 +208,11 @@ def set_axis(ax_, date_min, date_max):
     years = mdates.YearLocator()
     years_fmt = mdates.DateFormatter("%Y")
     months = mdates.MonthLocator()
+    months_fmt = mdates.DateFormatter("%b")
 
-    ax_.xaxis.set_major_locator(years)
-    ax_.xaxis.set_major_formatter(years_fmt)
-    ax_.xaxis.set_minor_locator(months)
+    ax_.xaxis.set_major_locator(months)
+    ax_.xaxis.set_major_formatter(months_fmt)
+    # ax_.xaxis.set_minor_locator(months)
 
     if date_min and date_max:
         datemin = np.datetime64(date_min, "Y")
@@ -236,23 +237,26 @@ def plot_inc_vs_expenses(
 
     inc_vs_exp = np.zeros(len(all_months))
     for account in expense_data[1]:
-        logging.info(account)
         index = 0
         for month in account[1:]:
             if month == "":
                 continue
-            logging.info(month)
             inc_vs_exp[index] += -float(month)
             index += 1
     for account in income_data[1]:
-        logging.info(account)
         index = 0
         for month in account[1:]:
             if month == "":
                 continue
-            logging.info(month)
             inc_vs_exp[index] += -float(month)
             index += 1
+
+    # calculate cumulitive total
+    cum_total = float(0.0)
+    cum_total_list = np.zeros(len(all_months))
+    for index in range(len(inc_vs_exp)):
+        cum_total = cum_total + inc_vs_exp[index]
+        cum_total_list[index] = cum_total
 
     start = all_months[0] if all_months else None
     end = all_months[-1] if all_months else None
@@ -266,7 +270,8 @@ def plot_inc_vs_expenses(
     )
     lw = 0.8
     ax.axhline(0, color="#000", linewidth=lw)
-    ax.plot(dates_all, inc_vs_exp, color="#000", alpha=0.7, linewidth=lw)
+    ax.bar(dates_all, inc_vs_exp)
+    ax.plot(dates_all, cum_total_list)
     logging.info(dates_all)
     logging.info(inc_vs_exp)
     plt.savefig(filename_path)
