@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package beancount.income_expense;
+
+message IncomeExpenseConfig {
+    repeated string budget_accounts = 1;
+    repeated Mapping mappings = 2;
+}
+
+message Mapping {
+    required string source = 1;
+    required string dest = 2;
+}
