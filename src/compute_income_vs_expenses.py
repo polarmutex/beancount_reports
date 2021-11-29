@@ -25,6 +25,8 @@ from monthly_expenses import compute_monthly_expenses, compute_monthly_income
 Date = datetime.date
 Month = str
 
+plt.style.use("fivethirtyeight")
+
 
 def read_config(
     config_filename: str,
