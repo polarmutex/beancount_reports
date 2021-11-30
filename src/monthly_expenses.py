@@ -6,10 +6,13 @@ __license__ = "GNU GPLv2"
 
 import collections
 import datetime
+import logging
 import re
-from typing import List, Set, Tuple
+from typing import Any, List, NamedTuple, Set, Tuple
 
 from beancount.core import account_types, convert, data, inventory
+
+Table = NamedTuple("Table", [("header", List[str]), ("rows", List[List[Any]])])
 
 MAPS = [
     # (re.compile("Expenses:Online:Media"), "Expenses:Online:Media"),
@@ -47,7 +50,7 @@ def compute_monthly_expenses(
     acctypes,
     price_map,
     Q,
-) -> Tuple[List[Tuple[int, int]], List[List[str]]]:
+) -> Table:
 
     # Accumulate expenses for the period.
     balances = collections.defaultdict(
@@ -101,7 +104,7 @@ def compute_monthly_expenses(
             total = sbalances[account].get(month, None)
             row.append(str(total.quantize(Q)) if total else "")
         rows.append(row)
-    return (header_months, rows)
+    return Table(header, rows)
 
 
 def compute_monthly_income(
@@ -109,7 +112,7 @@ def compute_monthly_income(
     acctypes,
     price_map,
     Q,
-) -> Tuple[List[Tuple[int, int]], List[List[str]]]:
+) -> Table:
 
     # Accumulate income for the period.
     balances = collections.defaultdict(
@@ -163,4 +166,4 @@ def compute_monthly_income(
             total = sbalances[account].get(month, None)
             row.append(str(total.quantize(Q)) if total else "")
         rows.append(row)
-    return (header_months, rows)
+    return Table(header, rows)

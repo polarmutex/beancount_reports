@@ -3,11 +3,12 @@
 import argparse
 import collections
 import datetime
+import io
 import logging
 import os
 from functools import partial
 from os import path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
@@ -108,11 +109,20 @@ def main():
     pruned_entries = prune_date_range(pruned_entries, start_date, end_date)
     pruned_entries = prune_non_budget_transactions(pruned_entries, config)
 
-    income_data = compute_monthly_income(pruned_entries, acctypes, price_map, Q)
-    expense_data = compute_monthly_expenses(
+    income_table = compute_monthly_income(
         pruned_entries, acctypes, price_map, Q
     )
-    write_html(args.output, "Income vs Expenses", income_data, expense_data)
+    expense_table = compute_monthly_expenses(
+        pruned_entries, acctypes, price_map, Q
+    )
+    write_html(
+        args.output,
+        "Income vs Expenses",
+        start_date,
+        end_date,
+        income_table,
+        expense_table,
+    )
 
 
 def prune_date_range(
@@ -162,7 +172,8 @@ STYLE = """
 }
 body, table { font: 9px Noto Sans, sans-serif; }
 p { margin: 0.2em; }
-table { border-collapse: collapse; }
+table { border-collapse: collapse; margin-left: auto;
+  margin-right: auto; }
 table td, table th { border: thin solid black; }
 table.full { width: 100%; }
 /* p { margin-bottom: .1em } */
@@ -185,12 +196,38 @@ RETURNS_TEMPLATE_POST = """
 </html>
 """
 
+Table = NamedTuple("Table", [("header", List[str]), ("rows", List[List[Any]])])
+
+
+def render_table(
+    table: Table, floatfmt: Optional[str] = None, classes: Optional[str] = None
+) -> str:
+    """Render a simple data table to HTML."""
+    oss = io.StringIO()
+    fprint = partial(print, file=oss)
+    fprint('<table class="{}">'.format(" ".join(classes or [])))
+    fprint("<tr>")
+    for heading in table.header:
+        fprint("<th>{}</th>".format(heading))
+    fprint("</tr>")
+    for row in table.rows:
+        fprint("<tr>")
+        for value in row:
+            if isinstance(value, float) and floatfmt:
+                value = floatfmt.format(value)
+            fprint("<td>{}</td>".format(value))
+        fprint("</tr>")
+    fprint("</table>")
+    return oss.getvalue()
+
 
 def write_html(
     dirname: str,
     title: str,
-    income_data: Tuple[List[Tuple[int, int]], List[List[str]]],
-    expense_data: Tuple[List[Tuple[int, int]], List[List[str]]],
+    start_date: datetime.date,
+    end_date: datetime.date,
+    income_table: Table,
+    expense_table: Table,
 ):
     logging.info("Writing returns dir for %s: %s", title, dirname)
     os.makedirs(dirname, exist_ok=True)
@@ -198,8 +235,79 @@ def write_html(
         fprint = partial(print, file=indexfile)
         fprint(RETURNS_TEMPLATE_PRE.format(style=STYLE, title=title))
         fprint("<h2>Income vs Expenses</h2>")
-        plot = plot_inc_vs_expenses(dirname, income_data, expense_data)
+        plot = plot_inc_vs_expenses(
+            dirname, start_date, end_date, income_table, expense_table
+        )
         fprint('<img src={} style="width: 100%"/>'.format(plot))
+
+        total_income = np.zeros(len(income_table.header[1:]))
+        for account in income_table.rows:
+            index = 0
+            for month in account[1:]:
+                if month != "":
+                    total_income[index] += -float(month)
+                index += 1
+        total_income_row = ["Total"]
+        for item in total_income:
+            total_income_row.append(str(round(item, 2)))
+        income_table.rows.append(total_income_row)
+
+        total_expenses = np.zeros(len(income_table.header[1:]))
+        for account in expense_table.rows:
+            index = 0
+            for month in account[1:]:
+                if month != "":
+                    total_expenses[index] += -float(month)
+                index += 1
+        total_expense_row = ["Total"]
+        for item in total_expenses:
+            total_expense_row.append(str(round(item, 2)))
+        expense_table.rows.append(total_expense_row)
+
+        fprint("<h2>table</h2>")
+        total_income_row[0] = "Income"
+        total_expense_row[0] = "Expense"
+        total_total_row = ["total"]
+        for i in range(len(total_income_row) - 1):
+            total_total_row.append(
+                str(
+                    round(
+                        float(total_income_row[i + 1])
+                        + float(total_expense_row[i + 1]),
+                        2,
+                    )
+                )
+            )
+        fprint(
+            "<p>",
+            render_table(
+                Table(
+                    income_table.header,
+                    [total_income_row, total_expense_row, total_total_row],
+                ),
+                floatfmt="{:.2%}",
+            ),
+            "</p>",
+        )
+        fprint("<h2>Income</h2>")
+        fprint(
+            "<p>",
+            render_table(
+                income_table,
+                floatfmt="{:.2%}",
+            ),
+            "</p>",
+        )
+        fprint("<h2>Expenses</h2>")
+        fprint(
+            "<p>",
+            render_table(
+                expense_table,
+                floatfmt="{:.2%}",
+            ),
+            "</p>",
+        )
+        fprint(RETURNS_TEMPLATE_POST)
 
 
 def set_axis(ax_, date_min, date_max):
@@ -215,7 +323,7 @@ def set_axis(ax_, date_min, date_max):
     # ax_.xaxis.set_minor_locator(months)
 
     if date_min and date_max:
-        datemin = np.datetime64(date_min, "Y")
+        datemin = np.datetime64(date_min, "Y") - np.timedelta64(1, "M")
         datemax = np.datetime64(date_max, "Y") + np.timedelta64(1, "Y")
         ax_.set_xlim(datemin, datemax)
 
@@ -226,29 +334,29 @@ def set_axis(ax_, date_min, date_max):
 
 def plot_inc_vs_expenses(
     dirname: str,
-    income_data: Tuple[List[Tuple[int, int]], List[List[str]]],
-    expense_data: Tuple[List[Tuple[int, int]], List[List[str]]],
+    start_date: datetime.date,
+    end_date: datetime.date,
+    income_data: Table,
+    expense_data: Table,
 ) -> str:
     filename = "inc_exp.svg"
     filename_path = path.join(dirname, "inc_exp.svg")
     fig, ax = plt.subplots(figsize=[10, 4])
     ax.set_title("Income vs Expenses")
-    all_months = expense_data[0]
+    all_months = expense_data.header[1:]
 
     inc_vs_exp = np.zeros(len(all_months))
     for account in expense_data[1]:
         index = 0
         for month in account[1:]:
-            if month == "":
-                continue
-            inc_vs_exp[index] += -float(month)
+            if month != "":
+                inc_vs_exp[index] += -float(month)
             index += 1
     for account in income_data[1]:
         index = 0
         for month in account[1:]:
-            if month == "":
-                continue
-            inc_vs_exp[index] += -float(month)
+            if month != "":
+                inc_vs_exp[index] += -float(month)
             index += 1
 
     # calculate cumulitive total
@@ -258,11 +366,9 @@ def plot_inc_vs_expenses(
         cum_total = cum_total + inc_vs_exp[index]
         cum_total_list[index] = cum_total
 
-    start = all_months[0] if all_months else None
-    end = all_months[-1] if all_months else None
-    date_start = datetime.date(start[0], start[1], 1) if start else None
-    date_end = datetime.date(end[0], end[1], 1) if end else None
-    dates_all = [datetime.date(x[0], x[1], 1) for x in all_months]
+    date_start = start_date if start_date else None
+    date_end = end_date if end_date else None
+    dates_all = [datetime.datetime.strptime(x, "%Y-%m") for x in all_months]
     set_axis(
         ax,
         date_start,
@@ -272,8 +378,6 @@ def plot_inc_vs_expenses(
     ax.axhline(0, color="#000", linewidth=lw)
     ax.bar(dates_all, inc_vs_exp)
     ax.plot(dates_all, cum_total_list)
-    logging.info(dates_all)
-    logging.info(inc_vs_exp)
     plt.savefig(filename_path)
     plt.close(fig)
     return filename
